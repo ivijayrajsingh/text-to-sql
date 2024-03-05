@@ -1,2 +1,5 @@
 Flask
+langchain_experimental
+openai
+pandas
 Gunicorn
