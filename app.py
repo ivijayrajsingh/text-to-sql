@@ -4,8 +4,10 @@ from langchain.llms import OpenAI
 import pandas as pd
 import os
 import tempfile
+from flask_cors import CORS, cross_origin
 
 app = Flask(__name__)
+CORS(app)
 
 # Load DataFrame from CSV
 df = pd.read_csv('text_to_pandas.csv')
