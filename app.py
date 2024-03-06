@@ -11,6 +11,7 @@ CORS(app)
 
 # Load DataFrame from CSV
 df = pd.read_csv('text_to_pandas.csv')
+df1 = pd.read_csv('Users_by_system_20240306.csv')
 
 # Set OpenAI API key
 os.environ["OPENAI_API_KEY"] = os.environ.get("OPENAI_API_KEY")
@@ -31,6 +32,7 @@ def load_agent(df):
 
 # Load the agent
 agent = load_agent(df)
+agent2 = load_agent(df1)
 
 @app.route('/')
 def hello_world():
@@ -51,6 +53,25 @@ def ask_question():
 
     # Call the agent to get the answer
     answer = agent.run(question)
+    print(answer)
+
+    # Return the answer
+    return jsonify({'answer': answer})
+
+@app.route('/ask2', methods=['POST'])
+def ask_question_route():
+    print('function called2')
+    # Get data from the request
+    request_data = request.get_json()
+    api_key = request_data.get('api_key')
+    question = request_data.get('question')
+
+    # # Check if API key is valid
+    if api_key != 'SAA':
+        return jsonify({'error': 'Invalid API key'}), 401
+
+    # Call the agent to get the answer
+    answer = agent2.run(question)
     print(answer)
 
     # Return the answer
