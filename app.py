@@ -43,7 +43,7 @@ def ask_question():
     request_data = request.get_json()
     api_key = request_data.get('api_key')
     question = request_data.get('question')
-    question = question+'. Give me descriptive answer.'
+    question = question
 
     # # Check if API key is valid
     if api_key != 'SAA':
