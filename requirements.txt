@@ -1,5 +1,6 @@
 Flask
 langchain_experimental
 openai
+tabulate
 pandas
 Gunicorn
