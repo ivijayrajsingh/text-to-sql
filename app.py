@@ -4,7 +4,7 @@ from langchain.llms import OpenAI
 import pandas as pd
 import os
 import tempfile
-from flask_cors import CORS, cross_origin
+from flask_cors import CORS
 
 app = Flask(__name__)
 CORS(app)
@@ -24,13 +24,17 @@ def load_agent(df):
     with tempfile.NamedTemporaryFile(mode='w', delete=False, suffix='.csv') as temp_file:
         df.to_csv(temp_file.name, index=False)
         temp_file_path = temp_file.name
-    
-    # Now you can pass the CSV file path to create_csv_agent
-    agent = create_csv_agent(OpenAI(api_key=api_key, temperature=0), temp_file_path, verbose=False)
-    
+
+    # Create agent with the dangerous code flag enabled
+    agent = create_csv_agent(
+        OpenAI(api_key=api_key, temperature=0),
+        temp_file_path,
+        verbose=False,
+        allow_dangerous_code=True  # Enable potentially dangerous code execution
+    )
     return agent
 
-# Load the agent
+# Load the agents
 agent = load_agent(df)
 agent2 = load_agent(df1)
 
@@ -41,40 +45,29 @@ def hello_world():
 @app.route('/ask', methods=['POST'])
 def ask_question():
     print('function called')
-    # Get data from the request
     request_data = request.get_json()
     api_key = request_data.get('api_key')
     question = request_data.get('question')
-    question = question
 
-    # # Check if API key is valid
     if api_key != 'SAA':
         return jsonify({'error': 'Invalid API key'}), 401
 
-    # Call the agent to get the answer
     answer = agent.run(question)
     print(answer)
-
-    # Return the answer
     return jsonify({'answer': answer})
 
 @app.route('/ask2', methods=['POST'])
 def ask_question_route():
     print('function called2')
-    # Get data from the request
     request_data = request.get_json()
     api_key = request_data.get('api_key')
     question = request_data.get('question')
 
-    # # Check if API key is valid
     if api_key != 'SAA':
         return jsonify({'error': 'Invalid API key'}), 401
 
-    # Call the agent to get the answer
     answer = agent2.run(question)
     print(answer)
-
-    # Return the answer
     return jsonify({'answer': answer})
 
 # if __name__ == '__main__':
