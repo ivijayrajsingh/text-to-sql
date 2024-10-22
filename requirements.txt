@@ -7,4 +7,3 @@ pandas==2.1.1
 Gunicorn==20.1.0
 langchain-community==0.0.5
 pymongo==4.5.0
-bson==0.5.10
