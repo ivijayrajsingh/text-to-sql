@@ -1,74 +1,91 @@
-from flask import Flask, request, jsonify
-from langchain_experimental.agents.agent_toolkits.csv.base import create_csv_agent
-from langchain.llms import OpenAI
 import pandas as pd
-import os
-import tempfile
+import json
+from flask import Flask, request, jsonify
 from flask_cors import CORS
+from pymongo import MongoClient
+from bson.objectid import ObjectId
+from langchain.llms import OpenAI
+import os
 
+# Initialize Flask app
 app = Flask(__name__)
 CORS(app)
 
-# Load DataFrame from CSV
-df = pd.read_csv('text_to_pandas.csv')
-df1 = pd.read_csv('Users_by_system_20240306.csv')
+# MongoDB Configuration
+os.environ["MONGO_URI"] = os.environ.get("MONGO_URI")
+MONGO_URI = os.environ.get("MONGO_URI")
+client = MongoClient(MONGO_URI)
+db = client['GooseDB']
 
-# Set OpenAI API key
+# OpenAI API Key Configuration
 os.environ["OPENAI_API_KEY"] = os.environ.get("OPENAI_API_KEY")
-api_key = os.environ.get("OPENAI_API_KEY")
+OPENAI_API_KEY = os.environ.get("OPENAI_API_KEY")
 
-# Define function to load agent
-def load_agent(df):
-    """Initialize and return the agent with the DataFrame."""
-    # Save the DataFrame to a temporary CSV file
-    with tempfile.NamedTemporaryFile(mode='w', delete=False, suffix='.csv') as temp_file:
-        df.to_csv(temp_file.name, index=False)
-        temp_file_path = temp_file.name
+# Initialize OpenAI object with LangChain
+llm = OpenAI(api_key=OPENAI_API_KEY)
 
-    # Create agent with the dangerous code flag enabled
-    agent = create_csv_agent(
-        OpenAI(api_key=api_key, temperature=0),
-        temp_file_path,
-        verbose=False,
-        allow_dangerous_code=True  # Enable potentially dangerous code execution
-    )
-    return agent
+def get_sql_operation_by_job_id(job_id):
+    """Fetch the SQL operation corresponding to a given job ID."""
+    collection = db['JobActivityDetails']
+    job_id = ObjectId(job_id)
+    try:
+        # Query to find the matching job record
+        record = collection.find_one({"JobId": job_id}, {"_id": 0, "Code": 1})
 
-# Load the agents
-agent = load_agent(df)
-agent2 = load_agent(df1)
+        if record and "Code" in record:
+            return record["Code"], None
+        else:
+            return None, "No SQL operation found for the given job ID."
+
+    except Exception as e:
+        return None, f"Error retrieving SQL operation: {e}"
+
+@app.route('/generate-lineage', methods=['POST'])
+def generate_lineage():
+    """Handle user requests to generate data lineage."""
+    request_data = request.get_json()
+
+    job_id = request_data.get('job_id')
+
+    if not job_id:
+        return jsonify({"error": "job_id is required"}), 400
+
+    # Fetch the SQL operation using the job ID
+    sql_operation, error = get_sql_operation_by_job_id(job_id)
+
+    if error:
+        return jsonify({"error": error}), 404
+
+    try:
+        # Create a prompt for generating data lineage
+        prompt = f"Generate a data lineage table based on the following query:\n\n{sql_operation}. Make sure you provide the detail of source column, source database, target column, target database and transformation done."
+        raw_response = llm.predict(prompt)
+
+        # Parse the response into a structured JSON format
+        table_data = parse_lineage_response(raw_response)
+
+        return jsonify({"lineage": table_data}), 200
+
+    except Exception as e:
+        return jsonify({"error": f"Error generating lineage: {str(e)}"}), 500
+
+def parse_lineage_response(response):
+    """Parse the response from OpenAI into structured JSON."""
+    lines = [line.strip() for line in response.split('\n') if line.strip()]
+
+    headers = [header.strip() for header in lines[0].split('|') if header.strip()]
+
+    rows = []
+    for line in lines[2:]:  # Skip the header and separator line
+        values = [value.strip() for value in line.split('|') if value.strip()]
+        row = dict(zip(headers, values))
+        rows.append(row)
+
+    return rows
 
 @app.route('/')
-def hello_world():
-    return 'Hello, World!'
-
-@app.route('/ask', methods=['POST'])
-def ask_question():
-    print('function called')
-    request_data = request.get_json()
-    api_key = request_data.get('api_key')
-    question = request_data.get('question')
-
-    if api_key != 'SAA':
-        return jsonify({'error': 'Invalid API key'}), 401
-
-    answer = agent.run(question)
-    print(answer)
-    return jsonify({'answer': answer})
-
-@app.route('/ask2', methods=['POST'])
-def ask_question_route():
-    print('function called2')
-    request_data = request.get_json()
-    api_key = request_data.get('api_key')
-    question = request_data.get('question')
-
-    if api_key != 'SAA':
-        return jsonify({'error': 'Invalid API key'}), 401
-
-    answer = agent2.run(question)
-    print(answer)
-    return jsonify({'answer': answer})
+def home():
+    return 'API is up and running!'
 
 # if __name__ == '__main__':
-#     app.run()
+#     app.run(debug=True, host='0.0.0.0', port=5000)
