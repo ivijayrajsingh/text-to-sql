@@ -58,7 +58,7 @@ def generate_lineage():
 
     try:
         # Create a prompt for generating data lineage
-        prompt = f"Generate a data lineage table based on the following query:\n\n{sql_operation}. Make sure you provide the detail of source column, source database, target column, target database and transformation done."
+        prompt = f" I have json file or dataframe or records:\n\n{sql_operation} that has list of code that needs to be executed in code column. It includes sql view and sql script.give me a data lieneage for all column in table form with source table, source column ,target table, target column and Transformation data. need to include mapping included in view. Make sure CodeEexecutionOrder is responsible for executing the code in that order."
         raw_response = llm.predict(prompt)
 
         # Parse the response into a structured JSON format
