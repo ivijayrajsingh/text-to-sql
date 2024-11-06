@@ -4,8 +4,10 @@ from flask import Flask, request, jsonify
 from flask_cors import CORS
 from pymongo import MongoClient
 from bson.objectid import ObjectId  # Use bson from pymongo
-from langchain.llms import OpenAI
 import os
+from openai import OpenAI
+import tiktoken
+import json
 
 # Initialize Flask app
 app = Flask(__name__)
@@ -21,24 +23,48 @@ db = client['GooseDB']
 os.environ["OPENAI_API_KEY"] = os.environ.get("OPENAI_API_KEY")
 OPENAI_API_KEY = os.environ.get("OPENAI_API_KEY")
 
-# Initialize OpenAI object with LangChain
 llm = OpenAI(api_key=OPENAI_API_KEY)
 
-def get_sql_operation_by_job_id(job_id):
-    """Fetch the SQL operation corresponding to a given job ID."""
-    collection = db['JobActivityDetails']
-    job_id = ObjectId(job_id)
-    try:
-        # Query to find the matching job record
-        record = collection.find_one({"JobId": job_id}, {"_id": 0, "Code": 1})
+# Load DataFrame from MongoDB
+# Load DataFrame from MongoDB
+def load_data_from_mongo(collection_name):
+    """Load data from MongoDB collection into a DataFrame."""
+    collection = db[collection_name]
+    data = list(collection.find({}, {"_id": 0}))  # Exclude MongoDB's default _id field
+    return pd.DataFrame(data)
 
-        if record and "Code" in record:
-            return record["Code"], None
-        else:
-            return None, "No SQL operation found for the given job ID."
 
-    except Exception as e:
-        return None, f"Error retrieving SQL operation: {e}"
+
+def generate_prompt(sql_chunk):
+    """Generate prompt for data lineage with transformation handling."""
+    example_output = '''{
+        "lineage": [
+            {
+                "Source_Column": "[Patient_Text]", 
+                "Source_Table": "[EDW].[PAS].[Input_Patient]", 
+                "Target_Column": "[Patient_Text]", 
+                "Target_Table": "[EDW].[dbo].[Patient]", 
+                "Transformation": "TRIM"
+            },
+            {
+                "Source_Column": "[Active_Flag]",
+                "Source_Table": "[EDW].[PAS].[Input_Patient]",
+                "Target_Column": "[Active_Flag]",
+                "Target_Table": "[EDW].[dbo].[Patient]",
+                "Transformation": "UPPER"
+            }
+        ]
+    }'''
+    
+    return (
+        f"Given the SQL operations:\n{sql_chunk}\n"
+        "Generate data lineage **strictly in valid JSON format** matching this structure:\n\n"
+        f"{example_output}\n\n"
+        "Make sure to correctly infer transformations from SQL operations such as `TRIM`, `UPPER`, `LOWER`, `CAST`, etc., "
+        "and reflect those transformations accurately in the JSON output."
+        "Output only a single valid JSON object with no extra characters."
+    )
+
 
 @app.route('/generate-lineage', methods=['POST'])
 def generate_lineage():
@@ -50,38 +76,56 @@ def generate_lineage():
     if not job_id:
         return jsonify({"error": "job_id is required"}), 400
 
-    # Fetch the SQL operation using the job ID
-    sql_operation, error = get_sql_operation_by_job_id(job_id)
+        # Load data into DataFrame
+    df_code_collection = load_data_from_mongo('JobActivityDetails')
 
-    if error:
-        return jsonify({"error": error}), 404
+    # Filter by JobId and sort by CodeExecutionOrder
+    sorted_df = df_code_collection[df_code_collection['JobId'] == ObjectId(job_id)].sort_values(by=['CodeEexecutionOrder'])
 
-    try:
-        # Create a prompt for generating data lineage
-        prompt = f" I have json file or dataframe or records:\n\n{sql_operation} that has list of code that needs to be executed in code column. It includes sql view and sql script.give me a data lieneage for all column in table form with source table, source column ,target table, target column and Transformation data. need to include mapping included in view. Make sure CodeEexecutionOrder is responsible for executing the code in that order."
-        raw_response = llm.predict(prompt)
+# Concatenate all 'Code' values into a single string
+    concatenated_codes = sorted_df['Code'].str.cat(sep=' ')
 
-        # Parse the response into a structured JSON format
-        table_data = parse_lineage_response(raw_response)
+    prompt = generate_prompt(concatenated_codes)
 
-        return jsonify({"lineage": table_data}), 200
+    client = OpenAI(api_key=OPENAI_API_KEY)
+    
+    # Example of counting tokens in the input prompt
+    encoding = tiktoken.encoding_for_model("gpt-4")
+    num_tokens = len(encoding.encode(concatenated_codes))
+    print("generation response")
+    response = client.chat.completions.create(
+        model="gpt-4",
+        messages=[{"role": "user", "content": prompt}],
+        max_tokens=num_tokens,
+        temperature=0
+    )
+    print("got response")
+    response = response.choices[0].message.content
+    # response = clean_json_lineage(response)
+    # print(response)
+    return jsonify({"lineage": response}), 200
 
-    except Exception as e:
-        return jsonify({"error": f"Error generating lineage: {str(e)}"}), 500
 
-def parse_lineage_response(response):
-    """Parse the response from OpenAI into structured JSON."""
-    lines = [line.strip() for line in response.split('\n') if line.strip()]
+def clean_json_lineage(data):
+    # Load the JSON data
+    parsed_data = json.loads(data)
+    
+    # Extract lineage data
+    lineage_data = parsed_data.get("lineage", [])
 
-    headers = [header.strip() for header in lines[0].split('|') if header.strip()]
-
-    rows = []
-    for line in lines[2:]:  # Skip the header and separator line
-        values = [value.strip() for value in line.split('|') if value.strip()]
-        row = dict(zip(headers, values))
-        rows.append(row)
-
-    return rows
+    # Format each entry in the lineage list for readability
+    cleaned_lineage = []
+    for entry in lineage_data:
+        cleaned_entry = {
+            "Source Column": entry.get("Source_Column", ""),
+            "Source Table": entry.get("Source_Table", ""),
+            "Target Column": entry.get("Target_Column", ""),
+            "Target Table": entry.get("Target_Table", ""),
+            "Transformation": entry.get("Transformation", "")
+        }
+        cleaned_lineage.append(cleaned_entry)
+    
+    return cleaned_lineage
 
 @app.route('/')
 def home():
