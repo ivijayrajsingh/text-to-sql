@@ -23,7 +23,7 @@ db = client['GooseDB']
 # OpenAI API Key Configuration
 os.environ["OPENAI_API_KEY"] = os.environ.get("OPENAI_API_KEY")
 OPENAI_API_KEY = os.environ.get("OPENAI_API_KEY")
-
+llm = OpenAI(api_key=OPENAI_API_KEY)
 encoding = tiktoken.encoding_for_model("gpt-4")
 
 # Function to load data from MongoDB
