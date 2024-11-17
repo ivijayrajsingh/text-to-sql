@@ -8,3 +8,4 @@ langchain-community==0.0.5
 pymongo==4.5.0
 openai
 tiktoken
+pandas
