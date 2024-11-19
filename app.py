@@ -72,6 +72,97 @@ def save_to_mongo(collection_name, code_id, response_json):
     result = collection.insert_one(document)
     return result.inserted_id
 
+def extract_and_save_data_lineage(code_id, save=False, retries=3):
+    """
+    Extracts the data lineage from the provided code_id and optionally saves it to MongoDB.
+    Uses responses from OpenAI for large outputs and retries in case of transient errors.
+
+    Parameters:
+        code_id (str): The unique identifier for the SQL code in MongoDB.
+        save (bool): Whether to save the extracted data lineage to MongoDB (default: False).
+        retries (int): Number of retry attempts in case of a timeout.
+
+    Returns:
+        dict: A status dictionary with the result of the operation.
+    """
+    job_activity = load_data_from_mongo('JobActivityDetails', code_id)
+    if not job_activity:
+        return {"status": "error", "message": "Code not found"}
+
+    sql_statement = job_activity.get("Code")
+    if not sql_statement:
+        return {"status": "error", "message": "No SQL statement found"}
+
+    sql_prompt = f"""
+    Generate a JSON data lineage for the following SQL query. Include the following fields for each column:
+    - SourceDatabaseName
+    - SourceTableName
+    - SourceColumnName
+    - TargetDatabaseName
+    - TargetTableName
+    - TargetColumnName
+    
+    SQL query:
+    ```sql
+    {sql_statement}
+    ```
+    """
+    
+    # print(f"Processing SQL Statement: {sql_statement}")
+
+    attempts = 0
+    while attempts < retries:
+        try:
+            # Send request to OpenAI API
+            response = llm.chat.completions.create(
+                model="gpt-4",
+                messages=[{"role": "user", "content": sql_prompt}],
+                temperature=0,
+                timeout=120,  # Increased timeout
+                max_tokens=4096  # Adjust token limit for larger responses
+            )
+
+            # Extract the response content
+            response_content = response.choices[0].message.content
+
+            # Attempt to parse JSON from response
+            try:
+                parsed_json = extract_json_to_table(response_content)
+            except Exception as e:
+                print(f"Error parsing JSON: {e}")
+                parsed_json = None
+
+            if not parsed_json:
+                return {"status": "error", "message": "Failed to parse response"}
+
+            if save:
+                # Save the parsed JSON to MongoDB if `save=True`
+                document_id = save_to_mongo('DataLineage', code_id, parsed_json)
+                return {
+                    "status": "success",
+                    "message": "Data lineage saved successfully",
+                    "document_id": str(document_id),
+                    "formatted_json": parsed_json
+                }
+
+            return {
+                "status": "success",
+                "message": "Data lineage extracted successfully",
+                "formatted_json": parsed_json,
+                "raw_response": response_content
+            }
+
+        except Exception as e:
+            print(f"Attempt {attempts + 1} failed: {e}")
+            if "timeout" in str(e).lower():
+                attempts += 1
+                time.sleep(2)  # Wait before retrying
+            else:
+                return {"status": "error", "message": str(e)}
+
+    return {"status": "error", "message": "Request timed out after multiple attempts."}
+
+
 # Flask route for getDetails
 @app.route('/getDetails', methods=['POST'])
 def get_details():
@@ -142,6 +233,26 @@ def get_details():
 
     except Exception as e:
         print(f"Error: {e}")
+        return jsonify({"status": "error", "message": str(e)}), 500
+
+
+@app.route('/get_data_lineage', methods=['POST'])
+def get_data_lineage():
+    """
+    Extracts data lineage from the provided code_id and optionally saves it to MongoDB.
+    """
+    data = request.json
+    code_id = data.get("code_id")
+    save = data.get("save", False)  # Optional parameter, defaults to False
+
+    if not code_id:
+        return jsonify({"status": "error", "message": "code_id is required"}), 400
+
+    # Call the extract_and_save_data_lineage function
+    try:
+        result = extract_and_save_data_lineage(code_id=code_id, save=save)
+        return jsonify(result), 200
+    except Exception as e:
         return jsonify({"status": "error", "message": str(e)}), 500
 
 @app.route('/')
