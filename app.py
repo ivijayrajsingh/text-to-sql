@@ -109,7 +109,9 @@ def extract_and_save_data_lineage(code_id, save=False, retries=3):
     """
     
     # print(f"Processing SQL Statement: {sql_statement}")
-
+    encoding = tiktoken.encoding_for_model("gpt-4")
+    num_tokens = len(encoding.encode(sql_prompt)) * 3
+    
     attempts = 0
     while attempts < retries:
         try:
@@ -119,7 +121,7 @@ def extract_and_save_data_lineage(code_id, save=False, retries=3):
                 messages=[{"role": "user", "content": sql_prompt}],
                 temperature=0,
                 timeout=120,  # Increased timeout
-                max_tokens=4096  # Adjust token limit for larger responses
+                max_tokens=num_tokens  # Adjust token limit for larger responses
             )
 
             # Extract the response content
@@ -206,7 +208,8 @@ def get_details():
     **SQL Statement**:
     {sql_statement}
     """
-
+    
+    
     try:
         # Query OpenAI
         response = llm.chat.completions.create(
